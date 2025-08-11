@@ -25,14 +25,19 @@ export default function Page() {
   const [running, setRunning] = React.useState(false);
   const [lastUpdated, setLastUpdated] = React.useState<string>("");
   const [statusText, setStatusText] = React.useState<string>("");
+  const [fetching, setFetching] = React.useState(false);
 
   React.useEffect(() => { fetchLatest(); }, []);
 
   async function fetchLatest() {
+    setFetching(true);
     try {
       const ctrl = new AbortController();
       const id = setTimeout(() => ctrl.abort(), 30000); // 30s timeout
-      const r = await fetch(`${API_BASE}/api/candidates`, { signal: ctrl.signal, cache: "no-store" });
+      const r = await fetch(`${API_BASE}/api/candidates`, {
+        signal: ctrl.signal,
+        cache: "no-store",
+      });
       clearTimeout(id);
       if (!r.ok) throw new Error(`GET /api/candidates ${r.status}`);
       const d = await r.json();
@@ -40,6 +45,8 @@ export default function Page() {
       setLastUpdated(new Date().toLocaleString());
     } catch (e: any) {
       alert(`Fetch Latest failed: ${e.message ?? e}`);
+    } finally {
+      setFetching(false);
     }
   }
   async function runModel() {
@@ -103,14 +110,16 @@ export default function Page() {
             <h1 className="text-xl font-bold tracking-widest uppercase">BreakoutBuyer</h1>
             <p className="text-xs text-slate-300/80 -mt-1">Early-career breakout predictor · Retro Card UI</p>
           </div>
-          <button onClick={downloadCsv} className="ml-auto inline-flex items-center gap-2 rounded-lg border border-cyan-500/50 px-3 py-2 text-sm">
-            <Download className="h-4 w-4"/> Export
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            {lastUpdated && <span className="text-xs text-slate-400">Updated {lastUpdated}</span>}
+            <button onClick={downloadCsv} className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/50 px-3 py-2 text-sm">
+              <Download className="h-4 w-4"/> Export
+            </button>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-6">
-        {lastUpdated && <p className="text-xs text-slate-400 mt-2">Last updated: {lastUpdated}</p>}
         <section className="rounded-2xl border border-cyan-500/30 bg-slate-900/50 p-4 shadow-[0_0_40px_-15px_rgba(0,255,255,.35)]">
           <div className="flex flex-wrap items-end gap-4">
             <div className="relative">
@@ -130,11 +139,21 @@ export default function Page() {
                      className="ml-2 align-middle"/>
               <span className="ml-2 tabular-nums">{minMPG}</span>
             </label>
-            <button disabled={running} onClick={runModel} className="ml-auto inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-600 to-fuchsia-600 px-3 py-2 text-sm">
-              <PlayCircle className="h-4 w-4"/>{running? "Running…" : "Run Model"}
+            <button
+              disabled={running}
+              onClick={runModel}
+              className="ml-auto inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-600 to-fuchsia-600 px-3 py-2 text-sm"
+            >
+              <PlayCircle className="h-4 w-4" />
+              {running ? "Running…" : "Run Model"}
             </button>
-            <button disabled={running} onClick={fetchLatest} className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/50 px-3 py-2 text-sm">
-              <Sparkles className="h-4 w-4"/> Fetch Latest
+            <button
+              disabled={running || fetching}
+              onClick={fetchLatest}
+              className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/50 px-3 py-2 text-sm"
+            >
+              <Sparkles className="h-4 w-4" />
+              {fetching ? "Fetching…" : "Fetch Latest"}
             </button>
             {running && (
               <span className="text-xs rounded-md border border-cyan-500/40 px-2 py-1 text-cyan-300">

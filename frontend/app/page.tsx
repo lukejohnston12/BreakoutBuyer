@@ -24,6 +24,7 @@ export default function Page() {
   const [minMPG, setMinMPG] = React.useState(18);
   const [running, setRunning] = React.useState(false);
   const [lastUpdated, setLastUpdated] = React.useState<string>("");
+  const [statusText, setStatusText] = React.useState<string>("");
 
   React.useEffect(() => { fetchLatest(); }, []);
 
@@ -62,6 +63,21 @@ export default function Page() {
       setRunning(false);
     }
   }
+
+  React.useEffect(() => {
+    if (!running) return;
+    const id = setInterval(async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/status`, { cache: "no-store" });
+        const s = await r.json();
+        const base = s?.phase ?? "idle";
+        const prog = (s?.done && s?.total) ? ` ${s.done}/${s.total}` : "";
+        setStatusText(`${base}${prog}`);
+      } catch { /* noop */ }
+    }, 2000);
+    return () => clearInterval(id);
+  }, [running]);
+
   function downloadCsv() {
     const header = ["DISPLAY_FIRST_LAST","AGE","SEASON_EXP","MPG","PTS_36","TS","P_BREAKOUT_NEXT"];
     const body = filtered.map(r => header.map(k => (r as any)[k] ?? "").join(","));
@@ -120,6 +136,11 @@ export default function Page() {
             <button disabled={running} onClick={fetchLatest} className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/50 px-3 py-2 text-sm">
               <Sparkles className="h-4 w-4"/> Fetch Latest
             </button>
+            {running && (
+              <span className="text-xs rounded-md border border-cyan-500/40 px-2 py-1 text-cyan-300">
+                {statusText || "running…"}
+              </span>
+            )}
           </div>
 
           <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

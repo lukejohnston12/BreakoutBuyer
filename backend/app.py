@@ -1,4 +1,5 @@
-import os, time
+import os, time, json
+import datetime as dt
 from typing import List, Optional
 import numpy as np
 import pandas as pd
@@ -24,6 +25,15 @@ CANDIDATES_PATH = os.getenv("BREAKOUTBUYER_CANDIDATES", "/data/candidates_latest
 MIN_SEASON = int(os.getenv("MIN_SEASON", 2018))
 MAX_SEASON = int(os.getenv("MAX_SEASON", 2025))  # t+1 target
 EARLY_MAX_EXP = int(os.getenv("EARLY_MAX_EXP", 3))  # focus rookies/sophs/yr3
+STATUS_PATH = os.getenv("BREAKOUTBUYER_STATUS", "/data/status.json")
+
+def write_status(status: dict):
+    try:
+        os.makedirs(os.path.dirname(STATUS_PATH), exist_ok=True)
+        status["ts"] = dt.datetime.utcnow().isoformat() + "Z"
+        with open(STATUS_PATH, "w") as f: json.dump(status, f)
+    except Exception:
+        pass
 
 # --- Utils ---
 def safe_call(fn, max_retries=4, sleep=0.6, **kwargs):
@@ -81,12 +91,15 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
                 ids.append(pid)
         except Exception:
             continue
+    write_status({"phase":"players_listed", "total": int(len(ids))})
 
     seasons=list(range(min_season, max_season))
     stacks=[]
     for i,pid in enumerate(ids):
         df=pull_player_season_totals(pid,seasons)
         if not df.empty: stacks.append(df)
+        if (i+1) % 10 == 0:
+            write_status({"phase":"pull_gamelogs", "done": int(i+1), "total": int(len(ids))})
         if (i+1)%25==0: print(f"Pulled {i+1}/{len(ids)} players…")
     if not stacks: return pd.DataFrame()
     ps=pd.concat(stacks, ignore_index=True)
@@ -159,6 +172,7 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
 
     # Simple time-aware split (train <= 2021)
     train_mask = df.loc[mask, "SEASON"] <= 2021
+    write_status({"phase":"train"})
     clf = HistGradientBoostingClassifier(max_depth=4, learning_rate=0.07, max_iter=500)
     clf.fit(X[train_mask], y[train_mask])
 
@@ -169,6 +183,7 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
     infer_mask = (latest["SEASON_EXP"] <= EARLY_MAX_EXP) & (latest["HAS_PRIOR_BREAKOUT"] == 0)
     latest = latest[infer_mask]
 
+    write_status({"phase":"score_latest"})
     X_latest = latest[feature_cols].fillna(0)
     latest["P_BREAKOUT_NEXT"] = clf.predict_proba(X_latest)[:,1]
 
@@ -194,11 +209,23 @@ def health(): return {"ok": True}
 
 @app.post("/api/run")
 def run():
+    write_status({"phase":"start"})
     ranked=build_dataset()
-    if ranked.empty: raise HTTPException(500, "No data built")
+    if ranked.empty:
+        write_status({"phase":"error"})
+        raise HTTPException(500, "No data built")
     os.makedirs(os.path.dirname(CANDIDATES_PATH), exist_ok=True)
     ranked.to_csv(CANDIDATES_PATH, index=False)
+    write_status({"phase":"done", "rows": int(len(ranked))})
     return {"rows": len(ranked), "saved_to": CANDIDATES_PATH}
+
+@app.get("/api/status")
+def status():
+    try:
+        with open(STATUS_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {"phase":"idle"}
 
 @app.get("/api/candidates", response_model=List[Candidate])
 def candidates():

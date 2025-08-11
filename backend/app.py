@@ -205,7 +205,23 @@ class Candidate(BaseModel):
 
 # --- Routes ---
 @app.get("/api/health")
-def health(): return {"ok": True}
+def health():
+    info = {"ok": True}
+    try:
+        if os.path.exists(CANDIDATES_PATH):
+            st = os.stat(CANDIDATES_PATH)
+            info["candidates_path"] = CANDIDATES_PATH
+            info["candidates_bytes"] = int(st.st_size)
+            info["candidates_mtime"] = dt.datetime.utcfromtimestamp(st.st_mtime).isoformat() + "Z"
+    except Exception:
+        pass
+    try:
+        if os.path.exists(STATUS_PATH):
+            with open(STATUS_PATH) as f:
+                info["status"] = json.load(f)
+    except Exception:
+        pass
+    return info
 
 @app.post("/api/run")
 def run():

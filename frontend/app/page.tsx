@@ -23,18 +23,44 @@ export default function Page() {
   const [minProb, setMinProb] = React.useState(60);
   const [minMPG, setMinMPG] = React.useState(18);
   const [running, setRunning] = React.useState(false);
+  const [lastUpdated, setLastUpdated] = React.useState<string>("");
 
   React.useEffect(() => { fetchLatest(); }, []);
 
   async function fetchLatest() {
-    const r = await fetch(`${API_BASE}/api/candidates`);
-    const d = await r.json();
-    setRows(d);
+    try {
+      const ctrl = new AbortController();
+      const id = setTimeout(() => ctrl.abort(), 30000); // 30s timeout
+      const r = await fetch(`${API_BASE}/api/candidates`, { signal: ctrl.signal, cache: "no-store" });
+      clearTimeout(id);
+      if (!r.ok) throw new Error(`GET /api/candidates ${r.status}`);
+      const d = await r.json();
+      setRows(d);
+      setLastUpdated(new Date().toLocaleString());
+    } catch (e: any) {
+      alert(`Fetch Latest failed: ${e.message ?? e}`);
+    }
   }
   async function runModel() {
     setRunning(true);
-    try { await fetch(`${API_BASE}/api/run`, { method: "POST" }); await fetchLatest(); }
-    finally { setRunning(false); }
+    const t0 = Date.now();
+    try {
+      const ctrl = new AbortController();
+      const id = setTimeout(() => ctrl.abort(), 15 * 60 * 1000); // 15 min
+      const r = await fetch(`${API_BASE}/api/run`, { method: "POST", signal: ctrl.signal });
+      clearTimeout(id);
+      if (!r.ok) {
+        const msg = await r.text().catch(() => "");
+        throw new Error(`POST /api/run ${r.status} ${msg}`);
+      }
+      await fetchLatest();
+      const secs = Math.round((Date.now() - t0) / 1000);
+      alert(`Model run complete in ${secs}s`);
+    } catch (e: any) {
+      alert(`Run failed: ${e.message ?? e}`);
+    } finally {
+      setRunning(false);
+    }
   }
   function downloadCsv() {
     const header = ["DISPLAY_FIRST_LAST","AGE","SEASON_EXP","MPG","PTS_36","TS","P_BREAKOUT_NEXT"];
@@ -68,6 +94,7 @@ export default function Page() {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-6">
+        {lastUpdated && <p className="text-xs text-slate-400 mt-2">Last updated: {lastUpdated}</p>}
         <section className="rounded-2xl border border-cyan-500/30 bg-slate-900/50 p-4 shadow-[0_0_40px_-15px_rgba(0,255,255,.35)]">
           <div className="flex flex-wrap items-end gap-4">
             <div className="relative">
@@ -87,10 +114,10 @@ export default function Page() {
                      className="ml-2 align-middle"/>
               <span className="ml-2 tabular-nums">{minMPG}</span>
             </label>
-            <button onClick={runModel} className="ml-auto inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-600 to-fuchsia-600 px-3 py-2 text-sm">
+            <button disabled={running} onClick={runModel} className="ml-auto inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-600 to-fuchsia-600 px-3 py-2 text-sm">
               <PlayCircle className="h-4 w-4"/>{running? "Running…" : "Run Model"}
             </button>
-            <button onClick={fetchLatest} className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/50 px-3 py-2 text-sm">
+            <button disabled={running} onClick={fetchLatest} className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/50 px-3 py-2 text-sm">
               <Sparkles className="h-4 w-4"/> Fetch Latest
             </button>
           </div>

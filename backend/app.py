@@ -246,8 +246,6 @@ def status():
 @app.get("/api/candidates", response_model=List[Candidate])
 def candidates():
     if not os.path.exists(CANDIDATES_PATH):
-        ranked=build_dataset()
-        if ranked.empty: return []
-        os.makedirs(os.path.dirname(CANDIDATES_PATH), exist_ok=True)
-        ranked.to_csv(CANDIDATES_PATH, index=False)
+        # Not ready yet
+        raise HTTPException(status_code=202, detail="candidates file not ready")
     return pd.read_csv(CANDIDATES_PATH).to_dict(orient="records")

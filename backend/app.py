@@ -235,9 +235,11 @@ def health():
     try:
         if os.path.exists(CANDIDATES_PATH):
             st = os.stat(CANDIDATES_PATH)
-            info["candidates_path"] = CANDIDATES_PATH
-            info["candidates_bytes"] = int(st.st_size)
-            info["candidates_mtime"] = dt.datetime.utcfromtimestamp(st.st_mtime).isoformat() + "Z"
+            info["candidates"] = {
+                "path": CANDIDATES_PATH,
+                "bytes": int(st.st_size),
+                "mtime": dt.datetime.utcfromtimestamp(st.st_mtime).isoformat() + "Z",
+            }
     except Exception:
         pass
     try:

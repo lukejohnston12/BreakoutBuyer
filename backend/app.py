@@ -92,15 +92,16 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
         except Exception:
             continue
     write_status({"phase":"players_listed", "total": int(len(ids))})
-
     seasons=list(range(min_season, max_season))
     stacks=[]
+    write_status({"phase":"pull_gamelogs", "done": 0, "total": int(len(ids))})
     for i,pid in enumerate(ids):
         df=pull_player_season_totals(pid,seasons)
         if not df.empty: stacks.append(df)
         if (i+1) % 10 == 0:
             write_status({"phase":"pull_gamelogs", "done": int(i+1), "total": int(len(ids))})
         if (i+1)%25==0: print(f"Pulled {i+1}/{len(ids)} players…")
+    write_status({"phase":"pull_gamelogs", "done": int(len(ids)), "total": int(len(ids))})
     if not stacks: return pd.DataFrame()
     ps=pd.concat(stacks, ignore_index=True)
 

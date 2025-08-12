@@ -30,23 +30,30 @@ export default function Page() {
   React.useEffect(() => { fetchLatest(); }, []);
 
   async function fetchLatest() {
-    setFetching(true);
     try {
       const ctrl = new AbortController();
-      const id = setTimeout(() => ctrl.abort(), 30000); // 30s timeout
-      const r = await fetch(`${API_BASE}/api/candidates`, {
-        signal: ctrl.signal,
-        cache: "no-store",
-      });
+      const id = setTimeout(() => ctrl.abort(), 30000);
+      const r = await fetch(`${API_BASE}/api/candidates`, { signal: ctrl.signal, cache: "no-store" });
       clearTimeout(id);
-      if (!r.ok) throw new Error(`GET /api/candidates ${r.status}`);
-      const d = await r.json();
+
+      if (!r.ok) {
+        // If backend returns 202 or any non-OK, just bail gracefully
+        console.warn("candidates not ready:", r.status);
+        setRows([]); // ensure array
+        return;
+      }
+
+      // Try to parse JSON safely
+      let d: any = [];
+      try { d = await r.json(); } catch { d = []; }
+
+      // Coerce to array
+      if (!Array.isArray(d)) d = [];
       setRows(d);
       setLastUpdated(new Date().toLocaleString());
-    } catch (e: any) {
-      alert(`Fetch Latest failed: ${e.message ?? e}`);
-    } finally {
-      setFetching(false);
+    } catch (e:any) {
+      console.warn("fetchLatest failed:", e?.message || e);
+      setRows([]); // keep UI stable
     }
   }
   async function runModel() {
@@ -95,7 +102,8 @@ export default function Page() {
     URL.revokeObjectURL(url);
   }
 
-  const filtered = rows
+  const list = Array.isArray(rows) ? rows : [];
+  const filtered = list
     .filter(r => (r.DISPLAY_FIRST_LAST || "").toLowerCase().includes(query.toLowerCase()))
     .filter(r => (r.P_BREAKOUT_NEXT ?? 0) * 100 >= minProb)
     .filter(r => (r.MPG ?? 0) >= minMPG)

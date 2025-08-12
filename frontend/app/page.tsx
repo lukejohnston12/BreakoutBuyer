@@ -32,46 +32,44 @@ export default function Page() {
   async function fetchLatest() {
     try {
       const ctrl = new AbortController();
-      const id = setTimeout(() => ctrl.abort(), 30000);
+      const id = setTimeout(() => ctrl.abort(), 120000); // 120s
       const r = await fetch(`${API_BASE}/api/candidates`, { signal: ctrl.signal, cache: "no-store" });
       clearTimeout(id);
-
-      if (!r.ok) {
-        // If backend returns 202 or any non-OK, just bail gracefully
-        console.warn("candidates not ready:", r.status);
-        setRows([]); // ensure array
+      if (r.status === 202) {
+        alert("Candidates not ready yet. Run the model first (or wait until it finishes).");
         return;
       }
-
-      // Try to parse JSON safely
-      let d: any = [];
-      try { d = await r.json(); } catch { d = []; }
-
-      // Coerce to array
-      if (!Array.isArray(d)) d = [];
+      if (!r.ok) throw new Error(`GET /api/candidates ${r.status}`);
+      const d = await r.json();
       setRows(d);
       setLastUpdated(new Date().toLocaleString());
     } catch (e:any) {
-      console.warn("fetchLatest failed:", e?.message || e);
-      setRows([]); // keep UI stable
+      alert(`Fetch Latest failed: ${e.message ?? e}`);
     }
   }
+
   async function runModel() {
     setRunning(true);
     const t0 = Date.now();
     try {
-      const ctrl = new AbortController();
-      const id = setTimeout(() => ctrl.abort(), 15 * 60 * 1000); // 15 min
-      const r = await fetch(`${API_BASE}/api/run`, { method: "POST", signal: ctrl.signal });
-      clearTimeout(id);
+      // kick off build
+      const r = await fetch(`${API_BASE}/api/run`, { method: "POST" });
       if (!r.ok) {
-        const msg = await r.text().catch(() => "");
+        const msg = await r.text().catch(()=> "");
         throw new Error(`POST /api/run ${r.status} ${msg}`);
       }
+      // poll status until done
+      let tries = 0;
+      while (tries < 900) { // ~30 min max @ 2s
+        await new Promise(res => setTimeout(res, 2000));
+        const s = await fetch(`${API_BASE}/api/status`, { cache: "no-store" }).then(x=>x.json()).catch(()=> ({}));
+        if (s?.phase === "done") break;
+        tries++;
+      }
       await fetchLatest();
-      const secs = Math.round((Date.now() - t0) / 1000);
+      const secs = Math.round((Date.now()-t0)/1000);
       alert(`Model run complete in ${secs}s`);
-    } catch (e: any) {
+    } catch (e:any) {
       alert(`Run failed: ${e.message ?? e}`);
     } finally {
       setRunning(false);

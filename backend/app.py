@@ -27,11 +27,12 @@ MAX_SEASON = int(os.getenv("MAX_SEASON", 2025))  # t+1 target
 EARLY_MAX_EXP = int(os.getenv("EARLY_MAX_EXP", 3))  # focus rookies/sophs/yr3
 STATUS_PATH = os.getenv("BREAKOUTBUYER_STATUS", "/data/status.json")
 
-def write_status(status: dict):
+def write_status(**kw):
     try:
         os.makedirs(os.path.dirname(STATUS_PATH), exist_ok=True)
-        status["ts"] = dt.datetime.utcnow().isoformat() + "Z"
-        with open(STATUS_PATH, "w") as f: json.dump(status, f)
+        kw["ts"] = dt.datetime.utcnow().isoformat() + "Z"
+        with open(STATUS_PATH, "w") as f:
+            json.dump(kw, f)
     except Exception:
         pass
 
@@ -91,17 +92,40 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
                 ids.append(pid)
         except Exception:
             continue
-    write_status({"phase":"players_listed", "total": int(len(ids))})
-    seasons=list(range(min_season, max_season))
-    stacks=[]
-    write_status({"phase":"pull_gamelogs", "done": 0, "total": int(len(ids))})
-    for i,pid in enumerate(ids):
-        df=pull_player_season_totals(pid,seasons)
-        if not df.empty: stacks.append(df)
-        if (i+1) % 10 == 0:
-            write_status({"phase":"pull_gamelogs", "done": int(i+1), "total": int(len(ids))})
-        if (i+1)%25==0: print(f"Pulled {i+1}/{len(ids)} players…")
-    write_status({"phase":"pull_gamelogs", "done": int(len(ids)), "total": int(len(ids))})
+    id2name = {p["id"]: p["full_name"] for p in all_players}
+    total = len(ids)
+    write_status(phase="players_listed", total=total)
+    seasons = list(range(min_season, max_season))
+    stacks = []
+    start = time.time()
+    for i, pid in enumerate(ids, 1):
+        try:
+            df = pull_player_season_totals(pid, seasons)
+        except Exception as e:
+            write_status(
+                phase="pull_gamelogs_error",
+                done=i-1,
+                total=total,
+                last_id=pid,
+                last_name=id2name.get(pid, "?"),
+                error=str(e)[:200],
+            )
+            continue
+        if not df.empty:
+            stacks.append(df)
+        if i % 10 == 0:
+            dt_s = max(time.time() - start, 1e-6)
+            rps = i / dt_s
+            eta = int((total - i) / rps) if rps > 0 else None
+            write_status(
+                phase="pull_gamelogs",
+                done=i,
+                total=total,
+                last_id=pid,
+                last_name=id2name.get(pid, "?"),
+                rps=round(rps, 2),
+                eta_sec=eta,
+            )
     if not stacks: return pd.DataFrame()
     ps=pd.concat(stacks, ignore_index=True)
 
@@ -173,7 +197,7 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
 
     # Simple time-aware split (train <= 2021)
     train_mask = df.loc[mask, "SEASON"] <= 2021
-    write_status({"phase":"train"})
+    write_status(phase="train")
     clf = HistGradientBoostingClassifier(max_depth=4, learning_rate=0.07, max_iter=500)
     clf.fit(X[train_mask], y[train_mask])
 
@@ -184,7 +208,7 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
     infer_mask = (latest["SEASON_EXP"] <= EARLY_MAX_EXP) & (latest["HAS_PRIOR_BREAKOUT"] == 0)
     latest = latest[infer_mask]
 
-    write_status({"phase":"score_latest"})
+    write_status(phase="score_latest")
     X_latest = latest[feature_cols].fillna(0)
     latest["P_BREAKOUT_NEXT"] = clf.predict_proba(X_latest)[:,1]
 
@@ -226,15 +250,20 @@ def health():
 
 @app.post("/api/run")
 def run():
-    write_status({"phase":"start"})
-    ranked=build_dataset()
-    if ranked.empty:
-        write_status({"phase":"error"})
-        raise HTTPException(500, "No data built")
-    os.makedirs(os.path.dirname(CANDIDATES_PATH), exist_ok=True)
-    ranked.to_csv(CANDIDATES_PATH, index=False)
-    write_status({"phase":"done", "rows": int(len(ranked))})
-    return {"rows": len(ranked), "saved_to": CANDIDATES_PATH}
+    t0 = time.time()
+    write_status(phase="start")
+    try:
+        ranked = build_dataset()
+        if ranked.empty:
+            write_status(phase="error", message="ranked empty", elapsed=int(time.time() - t0))
+            raise HTTPException(500, "No data built")
+        os.makedirs(os.path.dirname(CANDIDATES_PATH), exist_ok=True)
+        ranked.to_csv(CANDIDATES_PATH, index=False)
+        write_status(phase="done", rows=int(len(ranked)), elapsed=int(time.time() - t0))
+        return {"rows": len(ranked), "saved_to": CANDIDATES_PATH}
+    except Exception as e:
+        write_status(phase="error", message=str(e)[:300], elapsed=int(time.time() - t0))
+        raise
 
 @app.get("/api/status")
 def status():

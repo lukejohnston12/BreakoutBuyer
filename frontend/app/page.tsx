@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import Image from "next/image";
 import Papa from "papaparse";
 import { motion } from "framer-motion";
 import { Download, PlayCircle, Search, Sparkles } from "lucide-react";
@@ -111,10 +112,10 @@ export default function Page() {
     <div className="min-h-screen w-full bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-black to-slate-950">
       <header className="sticky top-0 z-20 backdrop-blur bg-black/40 border-b border-cyan-500/40">
         <div className="mx-auto max-w-6xl px-4 py-4 flex items-center gap-3">
-          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-cyan-400 via-fuchsia-500 to-amber-400 animate-pulse" />
+          <Image src="/nba-logo.svg" alt="NBA logo" width={36} height={36} className="h-9 w-9 rounded-xl" />
           <div>
             <h1 className="text-xl font-bold tracking-widest uppercase">BreakoutBuyer</h1>
-            <p className="text-xs text-slate-300/80 -mt-1">Early-career breakout predictor · Retro Card UI</p>
+            <p className="text-xs text-slate-300/80 -mt-1">Early-career NBA breakout predictor</p>
           </div>
           <div className="ml-auto flex items-center gap-2">
             {lastUpdated && <span className="text-xs text-slate-400">Updated {lastUpdated}</span>}

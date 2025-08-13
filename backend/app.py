@@ -10,22 +10,23 @@ from nba_api.stats.static import players as static_players
 from nba_api.stats.endpoints import playercareerstats, playergamelog, commonplayerinfo
 from sklearn.ensemble import HistGradientBoostingClassifier
 
-# --- App & CORS ---
-app = FastAPI(title="BreakoutBuyer API", version="0.2-early")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],            # tighten to your Railway frontend URL after deploy
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # --- Config ---
+FRONTEND_ORIGINS = os.getenv("FRONTEND_ORIGINS", "http://localhost:3000").split(",")
 CANDIDATES_PATH = os.getenv("BREAKOUTBUYER_CANDIDATES", "/data/candidates_latest.csv")
 MIN_SEASON = int(os.getenv("MIN_SEASON", 2018))
 MAX_SEASON = int(os.getenv("MAX_SEASON", 2025))  # t+1 target
 EARLY_MAX_EXP = int(os.getenv("EARLY_MAX_EXP", 3))  # focus rookies/sophs/yr3
 STATUS_PATH = os.getenv("BREAKOUTBUYER_STATUS", "/data/status.json")
+
+# --- App & CORS ---
+app = FastAPI(title="BreakoutBuyer API", version="0.2-early")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in FRONTEND_ORIGINS if o.strip()],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 def write_status(**kw):
     try:

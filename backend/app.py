@@ -28,6 +28,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/api/ping")
+def ping():
+    return {"ok": True, "msg": "pong_v2"}
+
 def write_status(**kw):
     try:
         os.makedirs(os.path.dirname(STATUS_PATH), exist_ok=True)

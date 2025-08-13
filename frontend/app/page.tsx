@@ -25,7 +25,8 @@ export default function Page() {
   const [minMPG, setMinMPG] = React.useState(18);
   const [running, setRunning] = React.useState(false);
   const [lastUpdated, setLastUpdated] = React.useState<string>("");
-  const [statusText, setStatusText] = React.useState<string>("");
+  const [statusText, setStatusText] = React.useState("");
+  const [pct, setPct] = React.useState<number>(0);
   const [fetching, setFetching] = React.useState(false);
 
   React.useEffect(() => { fetchLatest(); }, []);
@@ -83,10 +84,17 @@ export default function Page() {
       try {
         const r = await fetch(`${API_BASE}/api/status`, { cache: "no-store" });
         const s = await r.json();
-        const base = s?.phase ?? "idle";
-        const prog = (s?.done && s?.total) ? ` ${s.done}/${s.total}` : "";
-        setStatusText(`${base}${prog}`);
-      } catch { /* noop */ }
+        const phase = s?.phase || "idle";
+        const done = Number(s?.done || 0);
+        const total = Number(s?.total || 0);
+        const perc = total
+          ? Math.min(100, Math.round((done / total) * 100))
+          : (phase === "done" ? 100 : 0);
+        const eta = s?.eta_sec ? ` · ETA ${Math.max(0, s.eta_sec)}s` : "";
+        const last = s?.last_name ? ` · ${s.last_name}` : "";
+        setPct(perc);
+        setStatusText(`${phase}${total ? ` ${done}/${total}` : ""}${last}${eta}`);
+      } catch {}
     }, 2000);
     return () => clearInterval(id);
   }, [running]);
@@ -164,7 +172,7 @@ export default function Page() {
             </button>
             {running && (
               <span className="text-xs rounded-md border border-cyan-500/40 px-2 py-1 text-cyan-300">
-                {statusText || "running…"}
+                {statusText || "running…"} {pct ? `· ${pct}%` : ""}
               </span>
             )}
           </div>

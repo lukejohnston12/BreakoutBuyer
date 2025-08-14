@@ -116,7 +116,8 @@ export default function Page() {
         const eta = s?.eta_sec ? ` · ETA ${Math.max(0, s.eta_sec)}s` : "";
         const last = s?.last_name ? ` · ${s.last_name}` : "";
         setPct(perc);
-        setStatusText(`${phase}${total ? ` ${done}/${total}` : ""}${last}${eta}`);
+        const pretty = (phase || "").replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
+        setStatusText(`${pretty}${total ? ` ${done}/${total}` : ""}${last}${eta}`);
       } catch {}
     }, 2000);
     return () => clearInterval(id);

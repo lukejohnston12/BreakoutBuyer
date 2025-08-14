@@ -50,6 +50,7 @@ export default function Page() {
   React.useEffect(() => { fetchLatest(); }, [apiBase]);
 
   async function fetchLatest() {
+    setFetching(true);
     try {
       const ctrl = new AbortController();
       const id = setTimeout(() => ctrl.abort(), 60000);
@@ -65,6 +66,8 @@ export default function Page() {
       setErrorMsg("");
     } catch (e:any) {
       console.warn(e); setRows([]); setErrorMsg(e?.message || "Fetch failed");
+    } finally {
+      setFetching(false);
     }
   }
 
@@ -182,6 +185,7 @@ export default function Page() {
               <span className="ml-2 tabular-nums">{minMPG}</span>
             </label>
             <button
+              type="button"
               disabled={running}
               onClick={runModel}
               className="ml-auto inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-600 to-fuchsia-600 px-3 py-2 text-sm"
@@ -190,18 +194,31 @@ export default function Page() {
               {running ? "Running…" : "Run Model"}
             </button>
             <button
-              disabled={running || fetching}
+              type="button"
+              disabled={running}
               onClick={fetchLatest}
               className="inline-flex items-center gap-2 rounded-lg border border-cyan-500/50 px-3 py-2 text-sm"
             >
               <Sparkles className="h-4 w-4" />
               {fetching ? "Fetching…" : "Fetch Latest"}
             </button>
-            {running && (
-              <span className="text-xs rounded-md border border-cyan-500/40 px-2 py-1 text-cyan-300">
-                {statusText || "running…"} {pct ? `· ${pct}%` : ""}
-              </span>
-            )}
+          </div>
+
+          <div className="w-full mt-3">
+            <div className="flex items-center gap-3 text-xs text-slate-300" role="status" aria-live="polite">
+              <span className="uppercase tracking-widest text-slate-400">Status:</span>
+              <span className="text-cyan-300">{statusText || (running ? "Running…" : "Idle")}</span>
+              {pct ? <span className="text-cyan-300">{pct}%</span> : null}
+              {lastUpdated ? <span className="text-slate-400">· Updated {lastUpdated}</span> : null}
+            </div>
+            {running ? (
+              <div className="mt-2 h-1.5 rounded bg-slate-800/80 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-cyan-500 to-fuchsia-500 transition-all duration-300"
+                  style={{ width: `${Math.min(100, Math.max(0, pct || 5))}%` }}
+                />
+              </div>
+            ) : null}
           </div>
 
           <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

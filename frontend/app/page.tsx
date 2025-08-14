@@ -109,17 +109,13 @@ export default function Page() {
       try {
         const r = await fetch(`${apiBase}/api/status`, { cache: "no-store" });
         const s = await r.json();
-        const phase = s?.phase || "idle";
-        const done = Number(s?.done || 0);
-        const total = Number(s?.total || 0);
-        const perc = total
-          ? Math.min(100, Math.round((done / total) * 100))
-          : (phase === "done" ? 100 : 0);
-        const eta = s?.eta_sec ? ` · ETA ${Math.max(0, s.eta_sec)}s` : "";
+        const phaseText = (s?.phase || "").toString();
+        const pretty = phaseText.replace(/_/g, " ").replace(/\b\w/g, (c: any) => c.toUpperCase());
+        const progress = (s?.done && s?.total) ? ` ${s.done}/${s.total}` : "";
         const last = s?.last_name ? ` · ${s.last_name}` : "";
-        setPct(perc);
-        const pretty = (phase || "").replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
-        setStatusText(`${pretty}${total ? ` ${done}/${total}` : ""}${last}${eta}`);
+        const eta = typeof s?.eta_sec === "number" ? ` · ETA ${s.eta_sec}s` : "";
+        setStatusText(`${pretty}${progress}${last}${eta}`);
+        setPct(s?.total ? Math.min(100, Math.round((Number(s.done||0)/Number(s.total))*100)) : (phaseText==="done"?100:0));
       } catch {}
     }, 2000);
     return () => clearInterval(id);

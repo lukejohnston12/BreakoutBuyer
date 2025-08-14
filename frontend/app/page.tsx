@@ -52,21 +52,19 @@ export default function Page() {
   async function fetchLatest() {
     try {
       const ctrl = new AbortController();
-      const id = setTimeout(() => ctrl.abort(), 120000); // 120s
+      const id = setTimeout(() => ctrl.abort(), 60000);
       const r = await fetch(`${apiBase}/api/candidates`, { signal: ctrl.signal, cache: "no-store" });
       clearTimeout(id);
-      if (r.status === 202) {
-        console.warn("Candidates not ready yet. Run the model first (or wait until it finishes).");
-        setErrorMsg("Candidates not ready yet. Run the model first (or wait until it finishes).");
-        return;
-      }
+      if (r.status === 202) { setErrorMsg("Candidates not ready yet."); setRows([]); return; }
       if (!r.ok) throw new Error(`GET /api/candidates ${r.status}`);
-      const d = await r.json();
+      let d:any = [];
+      try { d = await r.json(); } catch { d = []; }
+      if (!Array.isArray(d)) d = [];
       setRows(d);
       setLastUpdated(new Date().toLocaleString());
+      setErrorMsg("");
     } catch (e:any) {
-      console.warn("Fetch Latest failed:", e?.message || e);
-      setErrorMsg(`Fetch Latest failed: ${e?.message || e}`);
+      console.warn(e); setRows([]); setErrorMsg(e?.message || "Fetch failed");
     }
   }
 
@@ -88,10 +86,10 @@ export default function Page() {
         if (s?.phase === "done") break;
         tries++;
       }
-      await fetchLatest();
       const secs = Math.round((Date.now()-t0)/1000);
       console.warn(`Model run complete in ${secs}s`);
       setErrorMsg(`Model run complete in ${secs}s`);
+      await fetchLatest();
     } catch (e:any) {
       console.warn("Run failed:", e?.message || e);
       setErrorMsg(`Run failed: ${e?.message || e}`);

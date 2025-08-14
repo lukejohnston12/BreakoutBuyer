@@ -39,6 +39,8 @@ def write_status(**kw):
         kw["ts"] = dt.datetime.utcnow().isoformat() + "Z"
         with open(STATUS_PATH, "w") as f:
             json.dump(kw, f)
+            f.flush()
+            os.fsync(f.fileno())
     except Exception:
         pass
 

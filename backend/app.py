@@ -107,17 +107,30 @@ def get_player_info(pid:int)->dict:
 # --- Core ---
 def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
     all_players = static_players.get_players()
-    ids=[]
-    for pid in pd.DataFrame(all_players)["id"].tolist():
+    id2name = {p["id"]: p["full_name"] for p in all_players}
+
+    # progress while discovering players (can be slow)
+    write_status(phase="Discovering players", total=len(all_players))
+
+    ids = []
+    for i, p in enumerate(all_players, 1):
+        pid = p["id"]
+        if i % 100 == 0:
+            write_status(
+                phase="Discovering players",
+                done=i,
+                total=len(all_players),
+                last_name=p.get("full_name", "?"),
+            )
         try:
             cs = safe_call(playercareerstats.PlayerCareerStats, player_id=pid).get_data_frames()[0]
             if not cs.empty and cs["SEASON_ID"].str.contains(str(min_season)).any():
                 ids.append(pid)
         except Exception:
             continue
-    id2name = {p["id"]: p["full_name"] for p in all_players}
+
     total = len(ids)
-    write_status(phase="players_listed", total=total)
+    write_status(phase="Players listed", total=total)
     seasons = list(range(min_season, max_season))
     stacks = []
     start = time.time()

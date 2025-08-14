@@ -28,6 +28,7 @@ export default function Page() {
   const [statusText, setStatusText] = React.useState("");
   const [pct, setPct] = React.useState<number>(0);
   const [fetching, setFetching] = React.useState(false);
+  const [hasLoadedRows, setHasLoadedRows] = React.useState(false);
 
   React.useEffect(() => {
     if (!apiBase) {
@@ -62,6 +63,7 @@ export default function Page() {
       try { d = await r.json(); } catch { d = []; }
       if (!Array.isArray(d)) d = [];
       setRows(d);
+      setHasLoadedRows(true);
       setLastUpdated(new Date().toLocaleString());
       setErrorMsg("");
     } catch (e:any) {
@@ -224,7 +226,9 @@ export default function Page() {
 
           <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {filtered.map((c,i)=> <RetroCard key={i} c={c} rank={i+1}/>)}
-            {filtered.length===0 && <div className="text-slate-400 text-sm">No matches. Try relaxing filters.</div>}
+            {hasLoadedRows && filtered.length === 0 && (
+              <div className="text-slate-400 text-sm">No matches. Try relaxing filters.</div>
+            )}
           </div>
         </section>
       </main>

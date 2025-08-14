@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from nba_api.stats.static import players as static_players
+from nba_api.stats.static import teams as static_teams
 from nba_api.stats.endpoints import playercareerstats, playergamelog, commonplayerinfo
 from sklearn.ensemble import HistGradientBoostingClassifier
 
@@ -40,6 +41,21 @@ def write_status(**kw):
             json.dump(kw, f)
     except Exception:
         pass
+
+@app.get("/api/ping-nba")
+def ping_nba():
+    """
+    Sanity check that outbound network + nba_api work.
+    Returns the number of NBA teams (should be 30) or a 502 with the error.
+    """
+    try:
+        teams = static_teams.get_teams()
+        write_status(phase="ping_nba_ok", teams=len(teams))
+        return {"ok": True, "teams": len(teams)}
+    except Exception as e:
+        msg = f"nba_api error: {str(e)[:200]}"
+        write_status(phase="ping_nba_error", message=msg)
+        raise HTTPException(status_code=502, detail=msg)
 
 # --- Utils ---
 def safe_call(fn, max_retries=4, sleep=0.6, **kwargs):

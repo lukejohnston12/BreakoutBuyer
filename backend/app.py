@@ -17,6 +17,8 @@ CANDIDATES_PATH = os.getenv("BREAKOUTBUYER_CANDIDATES", "/data/candidates_latest
 MIN_SEASON = int(os.getenv("MIN_SEASON", 2018))
 MAX_SEASON = int(os.getenv("MAX_SEASON", 2025))  # t+1 target
 EARLY_MAX_EXP = int(os.getenv("EARLY_MAX_EXP", 3))  # focus rookies/sophs/yr3
+MAX_PLAYERS = int(os.getenv("MAX_PLAYERS", "0"))     # 0 = no cap
+FAST_MODE = os.getenv("FAST_MODE", "0") == "1"       # if 1, prefer active players first
 STATUS_PATH = os.getenv("BREAKOUTBUYER_STATUS", "/data/status.json")
 
 # --- App & CORS ---
@@ -129,11 +131,19 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
         except Exception:
             continue
 
-    total = len(ids)
-    write_status(phase="Players listed", total=total)
+    if FAST_MODE:
+        # prioritize active players by pushing them to the front (best for testing)
+        active_set = {p["id"] for p in all_players if p.get("is_active")}
+        ids = [pid for pid in ids if pid in active_set] + [pid for pid in ids if pid not in active_set]
+
+    if MAX_PLAYERS and MAX_PLAYERS > 0:
+        ids = ids[:MAX_PLAYERS]
+
+    write_status(phase="Players listed", total=len(ids))
     seasons = list(range(min_season, max_season))
     stacks = []
     start = time.time()
+    total = len(ids)
     for i, pid in enumerate(ids, 1):
         try:
             df = pull_player_season_totals(pid, seasons)

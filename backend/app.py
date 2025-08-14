@@ -142,35 +142,32 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
     write_status(phase="Players listed", total=len(ids))
     seasons = list(range(min_season, max_season))
     stacks = []
-    start = time.time()
     total = len(ids)
+    start_pull = time.time()
+
     for i, pid in enumerate(ids, 1):
         try:
-            df = pull_player_season_totals(pid, seasons)
+            dfp = pull_player_season_totals(pid, seasons)
+            if not dfp.empty:
+                stacks.append(dfp)
         except Exception as e:
             write_status(
-                phase="pull_gamelogs_error",
-                done=i-1,
-                total=total,
-                last_id=pid,
-                last_name=id2name.get(pid, "?"),
-                error=str(e)[:200],
+                phase="Pulling game logs (error)",
+                done=i-1, total=total,
+                last_id=pid, last_name=id2name.get(pid,"?"),
+                error=str(e)[:180]
             )
             continue
-        if not df.empty:
-            stacks.append(df)
-        if i % 10 == 0:
-            dt_s = max(time.time() - start, 1e-6)
+
+        if i % 10 == 0 or i == total:
+            dt_s = max(time.time() - start_pull, 1e-6)
             rps = i / dt_s
-            eta = int((total - i) / rps) if rps > 0 else None
+            eta = int(max(0, (total - i) / rps)) if rps > 0 else None
             write_status(
-                phase="pull_gamelogs",
-                done=i,
-                total=total,
-                last_id=pid,
-                last_name=id2name.get(pid, "?"),
-                rps=round(rps, 2),
-                eta_sec=eta,
+                phase="Pulling game logs",
+                done=i, total=total,
+                last_id=pid, last_name=id2name.get(pid,"?"),
+                rps=round(rps, 2), eta_sec=eta
             )
     if not stacks: return pd.DataFrame()
     ps=pd.concat(stacks, ignore_index=True)

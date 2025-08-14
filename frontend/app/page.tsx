@@ -15,10 +15,10 @@ type Row = {
   TS?: number;
   P_BREAKOUT_NEXT: number;
 };
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
-
 export default function Page() {
+  const [apiBase, setApiBase] = React.useState<string>(process.env.NEXT_PUBLIC_API_BASE || "");
+  const [apiStatus, setApiStatus] = React.useState<string>("checking…");
+  const [errorMsg, setErrorMsg] = React.useState<string>("");
   const [rows, setRows] = React.useState<Row[]>([]);
   const [query, setQuery] = React.useState("");
   const [minProb, setMinProb] = React.useState(60);
@@ -29,16 +29,35 @@ export default function Page() {
   const [pct, setPct] = React.useState<number>(0);
   const [fetching, setFetching] = React.useState(false);
 
-  React.useEffect(() => { fetchLatest(); }, []);
+  React.useEffect(() => {
+    if (!apiBase) {
+      setApiStatus("missing NEXT_PUBLIC_API_BASE");
+      return;
+    }
+    (async () => {
+      try {
+        const r = await fetch(`${apiBase}/api/health`, { cache: "no-store" });
+        if (!r.ok) throw new Error(`health ${r.status}`);
+        const j = await r.json();
+        setApiStatus(j?.status?.phase ? `ok · ${j.status.phase}` : "ok");
+      } catch (e: any) {
+        setApiStatus(`unreachable`);
+        setErrorMsg(e?.message || String(e));
+      }
+    })();
+  }, [apiBase]);
+
+  React.useEffect(() => { fetchLatest(); }, [apiBase]);
 
   async function fetchLatest() {
     try {
       const ctrl = new AbortController();
       const id = setTimeout(() => ctrl.abort(), 120000); // 120s
-      const r = await fetch(`${API_BASE}/api/candidates`, { signal: ctrl.signal, cache: "no-store" });
+      const r = await fetch(`${apiBase}/api/candidates`, { signal: ctrl.signal, cache: "no-store" });
       clearTimeout(id);
       if (r.status === 202) {
-        alert("Candidates not ready yet. Run the model first (or wait until it finishes).");
+        console.warn("Candidates not ready yet. Run the model first (or wait until it finishes).");
+        setErrorMsg("Candidates not ready yet. Run the model first (or wait until it finishes).");
         return;
       }
       if (!r.ok) throw new Error(`GET /api/candidates ${r.status}`);
@@ -46,7 +65,8 @@ export default function Page() {
       setRows(d);
       setLastUpdated(new Date().toLocaleString());
     } catch (e:any) {
-      alert(`Fetch Latest failed: ${e.message ?? e}`);
+      console.warn("Fetch Latest failed:", e?.message || e);
+      setErrorMsg(`Fetch Latest failed: ${e?.message || e}`);
     }
   }
 
@@ -55,7 +75,7 @@ export default function Page() {
     const t0 = Date.now();
     try {
       // kick off build
-      const r = await fetch(`${API_BASE}/api/run`, { method: "POST" });
+      const r = await fetch(`${apiBase}/api/run`, { method: "POST" });
       if (!r.ok) {
         const msg = await r.text().catch(()=> "");
         throw new Error(`POST /api/run ${r.status} ${msg}`);
@@ -64,15 +84,17 @@ export default function Page() {
       let tries = 0;
       while (tries < 900) { // ~30 min max @ 2s
         await new Promise(res => setTimeout(res, 2000));
-        const s = await fetch(`${API_BASE}/api/status`, { cache: "no-store" }).then(x=>x.json()).catch(()=> ({}));
+        const s = await fetch(`${apiBase}/api/status`, { cache: "no-store" }).then(x=>x.json()).catch(()=> ({}));
         if (s?.phase === "done") break;
         tries++;
       }
       await fetchLatest();
       const secs = Math.round((Date.now()-t0)/1000);
-      alert(`Model run complete in ${secs}s`);
+      console.warn(`Model run complete in ${secs}s`);
+      setErrorMsg(`Model run complete in ${secs}s`);
     } catch (e:any) {
-      alert(`Run failed: ${e.message ?? e}`);
+      console.warn("Run failed:", e?.message || e);
+      setErrorMsg(`Run failed: ${e?.message || e}`);
     } finally {
       setRunning(false);
     }
@@ -82,7 +104,7 @@ export default function Page() {
     if (!running) return;
     const id = setInterval(async () => {
       try {
-        const r = await fetch(`${API_BASE}/api/status`, { cache: "no-store" });
+        const r = await fetch(`${apiBase}/api/status`, { cache: "no-store" });
         const s = await r.json();
         const phase = s?.phase || "idle";
         const done = Number(s?.done || 0);
@@ -97,7 +119,7 @@ export default function Page() {
       } catch {}
     }, 2000);
     return () => clearInterval(id);
-  }, [running]);
+  }, [running, apiBase]);
 
   function downloadCsv() {
     const header = ["DISPLAY_FIRST_LAST","AGE","SEASON_EXP","MPG","PTS_36","TS","P_BREAKOUT_NEXT"];
@@ -133,6 +155,13 @@ export default function Page() {
           </div>
         </div>
       </header>
+
+      <div className="mx-auto max-w-6xl px-4 mt-2">
+        <div className="text-xs text-slate-300">
+          API: <span className={apiStatus.startsWith("ok") ? "text-emerald-400" : "text-amber-400"}>{apiStatus}</span>
+          {errorMsg && <span className="ml-2 text-rose-400">· {errorMsg}</span>}
+        </div>
+      </div>
 
       <main className="mx-auto max-w-6xl px-4 py-6">
         <section className="rounded-2xl border border-cyan-500/30 bg-slate-900/50 p-4 shadow-[0_0_40px_-15px_rgba(0,255,255,.35)]">

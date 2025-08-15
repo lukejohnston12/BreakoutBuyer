@@ -8,7 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from nba_api.stats.static import players as static_players
 from nba_api.stats.static import teams as static_teams
-from nba_api.stats.endpoints import playercareerstats, playergamelog, commonplayerinfo
+from nba_api.stats.endpoints import (
+    playercareerstats,
+    playergamelog,
+    commonplayerinfo,
+    leaguedashplayerstats,
+)
 from sklearn.ensemble import HistGradientBoostingClassifier
 
 # --- Config ---
@@ -112,6 +117,95 @@ def get_player_info(pid:int)->dict:
     }
 
 # --- Core ---
+def build_dataset_fast(min_season=MIN_SEASON, max_season=MAX_SEASON, early_max_exp=EARLY_MAX_EXP):
+    """
+    Fast path: pull per-season player aggregates in ~1 call/season via LeagueDashPlayerStats.
+    Trains on early-career windows and scores the most recent season.
+    """
+    seasons = list(range(min_season, max_season))
+    frames = []
+    write_status(phase="FAST: fetch seasons", total=len(seasons))
+    for i, yr in enumerate(seasons, 1):
+        season_str = f"{yr}-{str(yr+1)[-2:]}"  # e.g., 2023-24
+        try:
+            df = leaguedashplayerstats.LeagueDashPlayerStats(
+                season=season_str,
+                measure_type_detailed_def="Base",
+                per_mode_detailed="PerGame"  # later we can derive per36
+            ).get_data_frames()[0]
+            df["SEASON"] = yr
+            frames.append(df)
+        except Exception as e:
+            write_status(phase="FAST: fetch error", done=i-1, total=len(seasons), error=str(e)[:180])
+            continue
+        if i % 1 == 0:
+            write_status(phase="FAST: fetched", done=i, total=len(seasons), last_season=season_str)
+
+    if not frames:
+        write_status(phase="error", message="FAST: no frames")
+        return pd.DataFrame()
+
+    all_s = pd.concat(frames, ignore_index=True)
+
+    # Keep core columns we need
+    cols_keep = ["PLAYER_ID","PLAYER_NAME","TEAM_ID","GP","MIN","PTS","AST","REB","FG_PCT","FG3_PCT","FT_PCT","SEASON"]
+    all_s = all_s[ [c for c in cols_keep if c in all_s.columns] ]
+
+    # Engineer quick features
+    all_s["MPG"] = all_s["MIN"]
+    all_s["PTS_36"] = all_s["PTS"] * (36/ (all_s["MIN"].replace(0, np.nan)))  # safe later
+    all_s["TS"] = (all_s["PTS"]) / (2*(all_s["FG_PCT"].fillna(0) + 0.44*all_s["FT_PCT"].fillna(0) + 1e-6))  # crude proxy
+    all_s["SEASON_EXP"] = all_s.groupby("PLAYER_ID")["SEASON"].rank(method="dense").astype(int) - 1
+
+    # Label a simple "breakout" target: next-season improvement on points+efficiency
+    all_s = all_s.sort_values(["PLAYER_ID","SEASON"])
+    all_s["PTS_next"] = all_s.groupby("PLAYER_ID")["PTS"].shift(-1)
+    all_s["TS_next"]  = all_s.groupby("PLAYER_ID")["TS"].shift(-1)
+    target = (
+        (
+            all_s["PTS_next"] >= all_s["PTS"].fillna(0) + 4
+        )
+        & (
+            all_s["TS_next"] >= (all_s["TS"].fillna(0) + 0.02)
+        )
+    ).astype(int)
+    all_s["BREAKOUT_NEXT"] = target
+
+    # Train on early-career seasons only
+    train = all_s[ all_s["SEASON_EXP"] < early_max_exp ].copy()
+    train = train.dropna(subset=["BREAKOUT_NEXT"])
+    feats = ["MPG","PTS_36","TS","SEASON_EXP"]
+    train = train.replace([np.inf,-np.inf], np.nan).fillna(0)
+
+    if len(train) < 100:
+        write_status(phase="error", message="FAST: insufficient train rows")
+        return pd.DataFrame()
+
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.model_selection import train_test_split
+    X = train[feats].values
+    y = train["BREAKOUT_NEXT"].values
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced")
+    write_status(phase="FAST: train")
+    model.fit(Xtr, ytr)
+
+    # Score latest season’s early-career players
+    latest = max(seasons)
+    cur = all_s[(all_s["SEASON"]==latest) & (all_s["SEASON_EXP"] < early_max_exp)].copy()
+    cur = cur.replace([np.inf,-np.inf], np.nan).fillna(0)
+    if cur.empty:
+        write_status(phase="error", message="FAST: no current rows")
+        return pd.DataFrame()
+
+    write_status(phase="FAST: score")
+    cur["P_BREAKOUT_NEXT"] = model.predict_proba(cur[feats].values)[:,1]
+
+    ranked = cur[["PLAYER_ID","PLAYER_NAME","SEASON_EXP","MPG","PTS_36","TS","P_BREAKOUT_NEXT"]].sort_values("P_BREAKOUT_NEXT", ascending=False)
+    ranked = ranked.rename(columns={"PLAYER_NAME":"DISPLAY_FIRST_LAST"})
+    write_status(phase="done", rows=int(len(ranked)))
+    return ranked
+
 def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
     all_players = static_players.get_players()
     id2name = {p["id"]: p["full_name"] for p in all_players}

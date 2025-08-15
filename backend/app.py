@@ -466,8 +466,18 @@ def run(request: Request):
     try:
         ranked = build_dataset_fast() if use_fast else build_dataset()
         if ranked.empty:
-            write_status(phase="error", message="no data built", elapsed=int(time.time()-t0))
-            raise HTTPException(500, "No data built")
+            # Try to read last status to return a helpful message
+            detail = "No data built"
+            try:
+                with open(STATUS_PATH) as f:
+                    s = json.load(f)
+                    msg = s.get("message") or s.get("phase")
+                    if msg:
+                        detail = f"No data built: {msg}"
+            except Exception:
+                pass
+            write_status(phase="error", message=detail, elapsed=int(time.time()-t0))
+            raise HTTPException(500, detail)
         os.makedirs(os.path.dirname(CANDIDATES_PATH), exist_ok=True)
         ranked.to_csv(CANDIDATES_PATH, index=False)
         write_status(phase="done", rows=int(len(ranked)), elapsed=int(time.time()-t0))

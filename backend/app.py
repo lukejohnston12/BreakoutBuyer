@@ -148,9 +148,9 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
 
     write_status(phase="Players listed", total=len(ids))
     seasons = list(range(min_season, max_season))
-    stacks = []
+    stacks: list[pd.DataFrame] = []
     total = len(ids)
-    start_pull = time.time()
+    t0 = time.time()
 
     for i, pid in enumerate(ids, 1):
         try:
@@ -161,19 +161,20 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
             write_status(
                 phase="Pulling game logs (error)",
                 done=i-1, total=total,
-                last_id=pid, last_name=id2name.get(pid,"?"),
+                last_id=pid, last_name=id2name.get(pid, "?"),
                 error=str(e)[:180]
             )
             continue
 
+        # heartbeat every 5 players (and at the end)
         if i % 5 == 0 or i == total:
-            dt_s = max(time.time() - start_pull, 1e-6)
+            dt_s = max(time.time() - t0, 1e-6)
             rps = i / dt_s
             eta = int(max(0, (total - i) / rps)) if rps > 0 else None
             write_status(
                 phase="Pulling game logs",
                 done=i, total=total,
-                last_id=pid, last_name=id2name.get(pid,"?"),
+                last_id=pid, last_name=id2name.get(pid, "?"),
                 rps=round(rps, 2), eta_sec=eta
             )
     if not stacks: return pd.DataFrame()

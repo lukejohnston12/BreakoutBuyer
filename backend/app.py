@@ -69,14 +69,18 @@ def ping_nba():
         raise HTTPException(status_code=502, detail=msg)
 
 # --- Utils ---
-def safe_call(fn, max_retries=4, sleep=0.6, **kwargs):
+def safe_call(fn, max_retries=5, sleep=0.6, **kwargs):
+    last_err = None
     for i in range(max_retries):
         try:
+            # nba_api classes accept 'timeout' in request kwargs in newer versions; set if available
+            if "timeout" in getattr(fn.__init__, "__code__", type("", (), {"co_varnames": ()})).co_varnames:
+                kwargs.setdefault("timeout", 20)
             return fn(**kwargs)
-        except Exception:
-            if i == max_retries - 1:
-                raise
-            time.sleep(sleep * (i+1))
+        except Exception as e:
+            last_err = e
+            time.sleep(sleep * (1.6 ** i))
+    raise last_err
 
 def season_id(y:int)->str:
     return f"{y}-{str((y+1)%100).zfill(2)}"

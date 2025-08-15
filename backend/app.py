@@ -115,28 +115,23 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
     all_players = static_players.get_players()
     id2name = {p["id"]: p["full_name"] for p in all_players}
 
-    # Read caps (envs must exist in Railway)
-    fast_mode = FAST_MODE
-    max_players = MAX_PLAYERS
-
-    # FAST path: only active players for discovery
-    if fast_mode:
-        active = static_players.get_active_players()
-        ids_source = active
-        write_status(phase="Discovering players (FAST)", total=len(active))
+    # Choose discovery source
+    if FAST_MODE:
+        ids_source = static_players.get_active_players()
+        write_status(phase="Discovering players (FAST)", total=len(ids_source))
     else:
         ids_source = all_players
-        write_status(phase="Discovering players", total=len(all_players))
+        write_status(phase="Discovering players", total=len(ids_source))
 
     ids = []
     for i, p in enumerate(ids_source, 1):
         pid = p["id"]
 
-        # heartbeat every 5
+        # Heartbeat every 5
         if i % 5 == 0:
             write_status(
-                phase="Discovering players (FAST)" if fast_mode else "Discovering players",
-                done=i, total=len(ids_source), last_name=p.get("full_name","?")
+                phase="Discovering players (FAST)" if FAST_MODE else "Discovering players",
+                done=i, total=len(ids_source), last_name=p.get("full_name", "?")
             )
 
         try:
@@ -146,9 +141,9 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
         except Exception:
             continue
 
-    # Apply cap after discovery (keeps the fastest subset)
-    if max_players and max_players > 0:
-        ids = ids[:max_players]
+    # Apply cap AFTER discovery, then report the capped total
+    if MAX_PLAYERS and MAX_PLAYERS > 0:
+        ids = ids[:MAX_PLAYERS]
 
     write_status(phase="Players listed", total=len(ids))
     seasons = list(range(min_season, max_season))

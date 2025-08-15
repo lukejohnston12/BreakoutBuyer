@@ -23,6 +23,7 @@ MIN_SEASON = int(os.getenv("MIN_SEASON", 2018))
 MAX_SEASON = int(os.getenv("MAX_SEASON", 2025))  # t+1 target
 EARLY_MAX_EXP = int(os.getenv("EARLY_MAX_EXP", 3))  # focus rookies/sophs/yr3
 FAST_MODE = os.getenv("FAST_MODE", "0") == "1"    # 1 = active players only (faster)
+FAST_PIPELINE = os.getenv("FAST_PIPELINE", "1") == "1"  # default ON for now
 MAX_PLAYERS = int(os.getenv("MAX_PLAYERS", "0"))  # 0 = no cap
 STATUS_PATH = os.getenv("BREAKOUTBUYER_STATUS", "/data/status.json")
 
@@ -398,34 +399,20 @@ def health():
 @app.post("/api/run")
 def run(request: Request):
     t0 = time.time()
-    force_fast = request.query_params.get("fast") == "1"
-    prev_env_fast = os.environ.get("FAST_MODE")
-    global FAST_MODE
-    prev_fast = FAST_MODE
-
-    write_status(phase="start")
+    use_fast = request.query_params.get("fast_pipeline") == "1" or FAST_PIPELINE
+    write_status(phase="start", mode="fast" if use_fast else "full")
     try:
-        if force_fast:
-            os.environ["FAST_MODE"] = "1"
-            FAST_MODE = True
-        ranked = build_dataset()
+        ranked = build_dataset_fast() if use_fast else build_dataset()
         if ranked.empty:
-            write_status(phase="error", message="ranked empty", elapsed=int(time.time() - t0))
+            write_status(phase="error", message="no data built", elapsed=int(time.time()-t0))
             raise HTTPException(500, "No data built")
         os.makedirs(os.path.dirname(CANDIDATES_PATH), exist_ok=True)
         ranked.to_csv(CANDIDATES_PATH, index=False)
-        write_status(phase="done", rows=int(len(ranked)), elapsed=int(time.time() - t0))
+        write_status(phase="done", rows=int(len(ranked)), elapsed=int(time.time()-t0))
         return {"rows": len(ranked), "saved_to": CANDIDATES_PATH}
     except Exception as e:
-        write_status(phase="error", message=str(e)[:300], elapsed=int(time.time() - t0))
+        write_status(phase="error", message=str(e)[:300], elapsed=int(time.time()-t0))
         raise
-    finally:
-        if force_fast:
-            if prev_env_fast is None:
-                os.environ.pop("FAST_MODE", None)
-            else:
-                os.environ["FAST_MODE"] = prev_env_fast
-            FAST_MODE = prev_fast
 
 @app.get("/api/status")
 def status():

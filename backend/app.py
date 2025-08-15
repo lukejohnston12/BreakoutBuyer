@@ -27,6 +27,25 @@ FAST_PIPELINE = os.getenv("FAST_PIPELINE", "1") == "1"  # default ON for now
 MAX_PLAYERS = int(os.getenv("MAX_PLAYERS", "0"))  # 0 = no cap
 STATUS_PATH = os.getenv("BREAKOUTBUYER_STATUS", "/data/status.json")
 
+CACHE_DIR = os.getenv("BREAKOUTBUYER_CACHE", "/data/cache")
+
+def cache_read(key: str):
+    try:
+        path = os.path.join(CACHE_DIR, f"{key}.parquet")
+        if os.path.exists(path):
+            return pd.read_parquet(path)
+    except Exception:
+        pass
+    return None
+
+def cache_write(key: str, df: pd.DataFrame):
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        path = os.path.join(CACHE_DIR, f"{key}.parquet")
+        df.to_parquet(path, index=False)
+    except Exception:
+        pass
+
 # --- App & CORS ---
 app = FastAPI(title="BreakoutBuyer API", version="0.2-early")
 app.add_middleware(
@@ -129,11 +148,16 @@ def build_dataset_fast(min_season=MIN_SEASON, max_season=MAX_SEASON, early_max_e
     for i, yr in enumerate(seasons, 1):
         season_str = f"{yr}-{str(yr+1)[-2:]}"  # e.g., 2023-24
         try:
-            df = leaguedashplayerstats.LeagueDashPlayerStats(
-                season=season_str,
-                measure_type_detailed_def="Base",
-                per_mode_detailed="PerGame"  # later we can derive per36
-            ).get_data_frames()[0]
+            cached = cache_read(f"league_dash_{season_str}")
+            if cached is not None and not cached.empty:
+                df = cached
+            else:
+                df = leaguedashplayerstats.LeagueDashPlayerStats(
+                    season=season_str,
+                    measure_type_detailed_def="Base",
+                    per_mode_detailed="PerGame"  # later we can derive per36
+                ).get_data_frames()[0]
+                cache_write(f"league_dash_{season_str}", df)
             df["SEASON"] = yr
             frames.append(df)
         except Exception as e:

@@ -36,11 +36,18 @@ def ping():
     return {"ok": True, "msg": "pong_v2"}
 
 def write_status(**kw):
+    """Persist progress to ``STATUS_PATH`` immediately.
+
+    Adding explicit ``flush`` and ``fsync`` calls ensures the status file is
+    written to disk right away so external observers can see updates without
+    delay.
+    """
     try:
         os.makedirs(os.path.dirname(STATUS_PATH), exist_ok=True)
         kw["ts"] = dt.datetime.utcnow().isoformat() + "Z"
         with open(STATUS_PATH, "w") as f:
             json.dump(kw, f)
+            # Force write to disk for instant visibility of progress updates
             f.flush()
             os.fsync(f.fileno())
     except Exception:

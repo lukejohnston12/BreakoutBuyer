@@ -118,19 +118,30 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
     all_players = static_players.get_players()
     id2name = {p["id"]: p["full_name"] for p in all_players}
 
-    # progress while discovering players (can be slow)
-    write_status(phase="Discovering players", total=len(all_players))
+    # Read caps (envs must exist in Railway)
+    fast_mode = FAST_MODE
+    max_players = MAX_PLAYERS
+
+    # FAST path: only active players for discovery
+    if fast_mode:
+        active = static_players.get_active_players()
+        ids_source = active
+        write_status(phase="Discovering players (FAST)", total=len(active))
+    else:
+        ids_source = all_players
+        write_status(phase="Discovering players", total=len(all_players))
 
     ids = []
-    for i, p in enumerate(all_players, 1):
+    for i, p in enumerate(ids_source, 1):
         pid = p["id"]
-        if i % 100 == 0:
+
+        # heartbeat every 5
+        if i % 5 == 0:
             write_status(
-                phase="Discovering players",
-                done=i,
-                total=len(all_players),
-                last_name=p.get("full_name", "?"),
+                phase="Discovering players (FAST)" if fast_mode else "Discovering players",
+                done=i, total=len(ids_source), last_name=p.get("full_name","?")
             )
+
         try:
             cs = safe_call(playercareerstats.PlayerCareerStats, player_id=pid).get_data_frames()[0]
             if not cs.empty and cs["SEASON_ID"].str.contains(str(min_season)).any():
@@ -138,13 +149,9 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
         except Exception:
             continue
 
-    if FAST_MODE:
-        # prioritize active players by pushing them to the front (best for testing)
-        active_set = {p["id"] for p in all_players if p.get("is_active")}
-        ids = [pid for pid in ids if pid in active_set] + [pid for pid in ids if pid not in active_set]
-
-    if MAX_PLAYERS and MAX_PLAYERS > 0:
-        ids = ids[:MAX_PLAYERS]
+    # Apply cap after discovery (keeps the fastest subset)
+    if max_players and max_players > 0:
+        ids = ids[:max_players]
 
     write_status(phase="Players listed", total=len(ids))
     seasons = list(range(min_season, max_season))

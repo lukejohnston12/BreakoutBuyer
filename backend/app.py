@@ -3,7 +3,7 @@ import datetime as dt
 from typing import List, Optional
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from nba_api.stats.static import players as static_players
@@ -302,10 +302,18 @@ def health():
     return info
 
 @app.post("/api/run")
-def run():
+def run(request: Request):
     t0 = time.time()
+    force_fast = request.query_params.get("fast") == "1"
+    prev_env_fast = os.environ.get("FAST_MODE")
+    global FAST_MODE
+    prev_fast = FAST_MODE
+
     write_status(phase="start")
     try:
+        if force_fast:
+            os.environ["FAST_MODE"] = "1"
+            FAST_MODE = True
         ranked = build_dataset()
         if ranked.empty:
             write_status(phase="error", message="ranked empty", elapsed=int(time.time() - t0))
@@ -317,6 +325,13 @@ def run():
     except Exception as e:
         write_status(phase="error", message=str(e)[:300], elapsed=int(time.time() - t0))
         raise
+    finally:
+        if force_fast:
+            if prev_env_fast is None:
+                os.environ.pop("FAST_MODE", None)
+            else:
+                os.environ["FAST_MODE"] = prev_env_fast
+            FAST_MODE = prev_fast
 
 @app.get("/api/status")
 def status():

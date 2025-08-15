@@ -66,9 +66,10 @@ def safe_call(fn, max_retries=5, sleep=0.6, **kwargs):
     last_err = None
     for i in range(max_retries):
         try:
-            # nba_api classes accept 'timeout' in request kwargs in newer versions; set if available
-            if "timeout" in getattr(fn.__init__, "__code__", type("", (), {"co_varnames": ()})).co_varnames:
-                kwargs.setdefault("timeout", 20)
+            # Add a request timeout when supported
+            if hasattr(fn, "__init__") and hasattr(fn.__init__, "__code__"):
+                if "timeout" in fn.__init__.__code__.co_varnames:
+                    kwargs.setdefault("timeout", 20)
             return fn(**kwargs)
         except Exception as e:
             last_err = e

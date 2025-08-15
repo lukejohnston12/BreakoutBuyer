@@ -177,7 +177,7 @@ def build_dataset(min_season=MIN_SEASON, max_season=MAX_SEASON):
             )
             continue
 
-        if i % 10 == 0 or i == total:
+        if i % 5 == 0 or i == total:
             dt_s = max(time.time() - start_pull, 1e-6)
             rps = i / dt_s
             eta = int(max(0, (total - i) / rps)) if rps > 0 else None

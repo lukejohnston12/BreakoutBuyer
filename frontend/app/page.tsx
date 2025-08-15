@@ -78,7 +78,7 @@ export default function Page() {
     const t0 = Date.now();
     try {
       // kick off build
-      const r = await fetch(`${apiBase}/api/run?fast=1`, { method: "POST" });
+      const r = await fetch(`${apiBase}/api/run?fast_pipeline=1`, { method: "POST" });
       if (!r.ok) {
         const msg = await r.text().catch(()=> "");
         throw new Error(`POST /api/run ${r.status} ${msg}`);

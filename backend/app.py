@@ -238,28 +238,38 @@ def bdl_season_averages(season: int, player_ids: List[int]) -> pd.DataFrame:
     chunk = 100
     url = "https://www.balldontlie.io/api/v1/season_averages"
     for i in range(0, len(player_ids), chunk):
-        ids = player_ids[i:i+chunk]
+        ids = player_ids[i:i + chunk]
         params = {"season": season}
         for pid in ids:
             params.setdefault("player_ids[]", []).append(pid)
         try:
             r = requests.get(url, params=params, timeout=25)
             r.raise_for_status()
-            rows.extend(r.json().get("data", []))
+            data = r.json().get("data", [])
+            if isinstance(data, dict):
+                data = [data]
+            mapping = {
+                "player_id": "PLAYER_ID",
+                "pts": "PTS",
+                "ast": "AST",
+                "reb": "REB",
+                "fga": "FGA",
+                "fta": "FTA",
+                "min": "MIN",
+            }
+            for row in data:
+                if isinstance(row, dict):
+                    rows.append({mapping.get(k, k): v for k, v in row.items()})
         except Exception:
             continue
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    df = df.rename(columns={
-        "player_id": "PLAYER_ID",
-        "pts": "PTS",
-        "fga": "FGA",
-        "fta": "FTA",
-        "min": "MIN",
-    })
-    df["MPG"] = df["MIN"].apply(parse_min)
+    df["MPG"] = df["MIN"].apply(parse_min) if "MIN" in df.columns else 0.0
     df["SEASON"] = season
+    for c in ["PTS", "AST", "REB", "FGA", "FTA"]:
+        if c not in df.columns:
+            df[c] = 0.0
     return df
 
 # --- Core ---

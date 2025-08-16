@@ -3,6 +3,7 @@ import datetime as dt
 from typing import List, Optional
 import numpy as np
 import pandas as pd
+import requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -13,8 +14,58 @@ from nba_api.stats.endpoints import (
     playergamelog,
     commonplayerinfo,
 )
-from nba_api.stats.endpoints import leaguedashplayerstats
 from sklearn.ensemble import HistGradientBoostingClassifier
+
+# ENV for optional proxy (set in Railway if needed)
+NBA_HTTP_PROXY = os.getenv("NBA_HTTP_PROXY")   # e.g. http://user:pass@host:port
+NBA_HTTPS_PROXY = os.getenv("NBA_HTTPS_PROXY") # e.g. https://user:pass@host:port
+
+def _nba_proxies():
+    p = {}
+    if NBA_HTTP_PROXY:
+        p["http"] = NBA_HTTP_PROXY
+    if NBA_HTTPS_PROXY:
+        p["https"] = NBA_HTTPS_PROXY
+    return p or None
+
+# A modern user-agent + headers that Stats.NBA accepts
+_NBA_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.nba.com",
+    "Referer": "https://www.nba.com/",
+    "Connection": "keep-alive",
+}
+
+def nba_leaguedashplayerstats(season_str: str, per_mode="PerGame", measure="Base", season_type="Regular Season", timeout=25):
+    """
+    Direct call to stats.nba.com (bypasses nba_api’s client). Returns a DataFrame or raises.
+    """
+    url = "https://stats.nba.com/stats/leaguedashplayerstats"
+    params = {
+        "Season": season_str,                # e.g., "2023-24"
+        "SeasonType": season_type,
+        "PerMode": per_mode,
+        "MeasureType": measure,              # "Base"
+        "LeagueID": "00",
+    }
+    r = requests.get(
+        url,
+        params=params,
+        headers=_NBA_HEADERS,
+        timeout=timeout,
+        proxies=_nba_proxies(),
+        allow_redirects=True,
+    )
+    r.raise_for_status()
+    j = r.json()
+    # The JSON shape uses "resultSets" or "resultSet" depending on endpoint
+    rs = (j.get("resultSets") or [j.get("resultSet")])[0]
+    headers = rs["headers"]
+    rows = rs["rowSet"]
+    df = pd.DataFrame(rows, columns=headers)
+    return df
 
 # --- Config ---
 FRONTEND_ORIGINS = os.getenv("FRONTEND_ORIGINS", "http://localhost:3000").split(",")
@@ -164,11 +215,11 @@ def build_dataset_fast(min_season=MIN_SEASON, max_season=MAX_SEASON, early_max_e
             if cached is not None and not cached.empty:
                 df = cached
             else:
-                df = leaguedashplayerstats.LeagueDashPlayerStats(
-                    season=season_str,
-                    measure_type_detailed_def="Base",
-                    per_mode_detailed="PerGame"
-                ).get_data_frames()[0]
+                df = nba_leaguedashplayerstats(
+                    season_str,
+                    per_mode="PerGame",
+                    measure="Base",
+                )
                 if 'cache_write' in globals():
                     cache_write(f"league_dash_{season_str}", df)
             df["SEASON"] = yr

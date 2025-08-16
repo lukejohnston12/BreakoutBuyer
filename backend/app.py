@@ -75,6 +75,7 @@ MAX_SEASON = int(os.getenv("MAX_SEASON", 2025))  # t+1 target
 EARLY_MAX_EXP = int(os.getenv("EARLY_MAX_EXP", 3))  # focus rookies/sophs/yr3
 FAST_MODE = os.getenv("FAST_MODE", "0") == "1"    # 1 = active players only (faster)
 FAST_PIPELINE = os.getenv("FAST_PIPELINE", "1") == "1"  # default ON for now
+STATS_PROVIDER = os.getenv("STATS_PROVIDER", "nba").lower()
 MAX_PLAYERS = int(os.getenv("MAX_PLAYERS", "0"))  # 0 = no cap
 STATUS_PATH = os.getenv("BREAKOUTBUYER_STATUS", "/data/status.json")
 
@@ -187,136 +188,173 @@ def get_player_info(pid:int)->dict:
         "DRAFT_NUMBER":pd.to_numeric(info.loc[0,"DRAFT_NUMBER"], errors="coerce"),
     }
 
+# --- balldontlie helpers ---
+def bdl_list_players(limit: int = 600) -> List[dict]:
+    """Return a list of players from balldontlie."""
+    out: List[dict] = []
+    per_page = 100
+    page = 1
+    url = "https://www.balldontlie.io/api/v1/players"
+    while len(out) < limit:
+        try:
+            r = requests.get(url, params={"per_page": per_page, "page": page}, timeout=20)
+            r.raise_for_status()
+            j = r.json()
+            out.extend(j.get("data", []))
+            nxt = j.get("meta", {}).get("next_page")
+            if not nxt:
+                break
+            page = nxt
+        except Exception:
+            break
+    return out[:limit]
+
+def bdl_season_averages(season: int, player_ids: List[int]) -> pd.DataFrame:
+    """Fetch season averages from balldontlie for the given players."""
+    rows: List[dict] = []
+    chunk = 100
+    url = "https://www.balldontlie.io/api/v1/season_averages"
+    for i in range(0, len(player_ids), chunk):
+        ids = player_ids[i:i+chunk]
+        params = {"season": season}
+        for pid in ids:
+            params.setdefault("player_ids[]", []).append(pid)
+        try:
+            r = requests.get(url, params=params, timeout=25)
+            r.raise_for_status()
+            rows.extend(r.json().get("data", []))
+        except Exception:
+            continue
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    df = df.rename(columns={
+        "player_id": "PLAYER_ID",
+        "pts": "PTS",
+        "fga": "FGA",
+        "fta": "FTA",
+        "min": "MIN",
+    })
+    df["MPG"] = df["MIN"].apply(parse_min)
+    df["SEASON"] = season
+    return df
+
 # --- Core ---
 def build_dataset_fast(min_season=MIN_SEASON, max_season=MAX_SEASON, early_max_exp=EARLY_MAX_EXP):
     """
-    Fast path using per-season aggregates. Tries hard not to return empty.
-    Emits detailed status at each phase.
+    Fast pipeline: try NBA Stats via direct client first; on failure, fall back to balldontlie.
     """
     try:
-        min_season = int(min_season)
-        max_season = int(max_season)
+        min_season = int(min_season); max_season = int(max_season)
     except Exception:
-        write_status(phase="error", message="FAST: bad season bounds")
-        return pd.DataFrame()
+        write_status(phase="error", message="FAST: bad season bounds"); return pd.DataFrame()
 
     seasons = list(range(min_season, max_season))
     if not seasons:
-        write_status(phase="error", message="FAST: no seasons in range")
-        return pd.DataFrame()
+        write_status(phase="error", message="FAST: no seasons"); return pd.DataFrame()
 
-    frames = []
-    write_status(phase="FAST: fetch seasons", total=len(seasons))
+    frames: List[pd.DataFrame] = []
+    provider = STATS_PROVIDER
 
-    for i, yr in enumerate(seasons, 1):
-        season_str = f"{yr}-{str(yr+1)[-2:]}"
-        try:
-            cached = cache_read(f"league_dash_{season_str}") if 'cache_read' in globals() else None
-            if cached is not None and not cached.empty:
-                df = cached
-            else:
-                df = nba_leaguedashplayerstats(
-                    season_str,
-                    per_mode="PerGame",
-                    measure="Base",
-                )
-                if 'cache_write' in globals():
-                    cache_write(f"league_dash_{season_str}", df)
-            df["SEASON"] = yr
-            frames.append(df)
-            write_status(phase="FAST: fetched", done=i, total=len(seasons), last_season=season_str)
-        except Exception as e:
-            write_status(phase="FAST: fetch error", done=i-1, total=len(seasons), last_season=season_str, error=str(e)[:180])
+    # --- 1) Prefer NBA direct ---
+    if provider == "nba":
+        write_status(phase="FAST[nba]: fetch seasons", total=len(seasons))
+        for i, yr in enumerate(seasons, 1):
+            season_str = f"{yr}-{str(yr+1)[-2:]}"
+            try:
+                df = nba_leaguedashplayerstats(season_str, per_mode="PerGame", measure="Base", season_type="Regular Season", timeout=25)
+                df["SEASON"] = yr
+                frames.append(df)
+                write_status(phase="FAST[nba]: fetched", done=i, total=len(seasons), last_season=season_str)
+            except Exception as e:
+                write_status(phase="FAST[nba]: fetch error", done=i-1, total=len(seasons), error=str(e)[:180])
+        if not frames:
+            write_status(phase="FAST: switching to bdl"); provider = "bdl"
+
+    # --- 2) Fall back to balldontlie if needed ---
+    if provider == "bdl":
+        write_status(phase="FAST[bdl]: list players")
+        plist = bdl_list_players(limit=int(os.getenv("BDL_PLAYER_LIMIT", "600")))
+        if not plist:
+            write_status(phase="error", message="FAST[bdl]: no players returned"); return pd.DataFrame()
+        pids = [p["id"] for p in plist]
+        write_status(phase="FAST[bdl]: fetch seasons", total=len(seasons))
+        for i, yr in enumerate(seasons, 1):
+            try:
+                df = bdl_season_averages(yr, pids)
+                if not df.empty:
+                    if "PLAYER_NAME" not in df.columns and "PLAYER_ID" in df.columns:
+                        id2name = {p["id"]: f"{p.get('first_name','')} {p.get('last_name','')}".strip() for p in plist}
+                        df["PLAYER_NAME"] = df["PLAYER_ID"].map(id2name).fillna("")
+                    frames.append(df)
+                write_status(phase="FAST[bdl]: fetched", done=i, total=len(seasons), last_season=yr)
+            except Exception as e:
+                write_status(phase="FAST[bdl]: fetch error", done=i-1, total=len(seasons), error=str(e)[:160])
 
     if not frames:
-        write_status(phase="error", message="FAST: no frames after fetch")
+        write_status(phase="error", message="FAST: no frames after providers")
         return pd.DataFrame()
 
+    # --- Harmonize + features (same as before) ---
     all_s = pd.concat(frames, ignore_index=True)
 
-    # Select core columns defensively
-    wanted = [
-        "PLAYER_ID","PLAYER_NAME","TEAM_ID","GP","MIN","PTS","AST","REB",
-        "FGA","FTA","FG_PCT","FG3_PCT","FT_PCT","SEASON"
-    ]
-    cols = [c for c in wanted if c in all_s.columns]
-    all_s = all_s[cols].copy()
+    # Align column names from NBA or BDL shapes
+    if "PLAYER_NAME" not in all_s.columns and "player_name" in all_s.columns:
+        all_s["PLAYER_NAME"] = all_s["player_name"]
+    if "PLAYER_ID" not in all_s.columns and "PLAYER_ID" in all_s.columns:
+        pass  # placeholder to avoid lint complaints
 
-    # Feature engineering
-    all_s["MPG"] = pd.to_numeric(all_s.get("MIN", 0), errors="coerce").fillna(0.0)
-    # Per-36 points (safe)
+    # numeric columns
+    all_s["PTS"] = pd.to_numeric(all_s.get("PTS", all_s.get("PTS", 0)), errors="coerce").fillna(0.0)
+    if "MIN" in all_s.columns:
+        all_s["MPG"] = pd.to_numeric(all_s["MIN"], errors="coerce").fillna(0.0)
+    else:
+        all_s["MPG"] = pd.to_numeric(all_s.get("MPG", 0), errors="coerce").fillna(0.0)
+
     with np.errstate(divide="ignore", invalid="ignore"):
         all_s["PTS_36"] = np.where(all_s["MPG"] > 0, all_s["PTS"] * (36.0 / all_s["MPG"]), 0.0)
 
-    # True Shooting using per-game FGA/FTA (proxy)
     FGA = pd.to_numeric(all_s.get("FGA", 0), errors="coerce").fillna(0.0)
     FTA = pd.to_numeric(all_s.get("FTA", 0), errors="coerce").fillna(0.0)
     denom = (2.0 * (FGA + 0.44 * FTA)).replace(0, np.nan)
     TS = pd.to_numeric(all_s.get("PTS", 0), errors="coerce") / denom
     all_s["TS"] = TS.fillna(0.0).clip(0, 1.5)
 
-    # Experience index by player
     all_s = all_s.sort_values(["PLAYER_ID","SEASON"])
     all_s["SEASON_EXP"] = all_s.groupby("PLAYER_ID")["SEASON"].rank(method="dense").astype(int) - 1
 
-    # Breakout label (simple next-season lift)
     all_s["PTS_next"] = all_s.groupby("PLAYER_ID")["PTS"].shift(-1)
     all_s["TS_next"]  = all_s.groupby("PLAYER_ID")["TS"].shift(-1)
     all_s["BREAKOUT_NEXT"] = ((all_s["PTS_next"] >= all_s["PTS"].fillna(0) + 3.0) &
-                              (all_s["TS_next"] >= all_s["TS"].fillna(0) + 0.015)).astype(int)
+                              (all_s["TS_next"]  >= all_s["TS"].fillna(0) + 0.015)).astype(int)
 
-    # Train only on early-career rows
-    train = all_s[ all_s["SEASON_EXP"] < early_max_exp ].copy()
+    train = all_s[ all_s["SEASON_EXP"] < early_max_exp ].copy().replace([np.inf,-np.inf], np.nan).fillna(0)
     feats = ["MPG","PTS_36","TS","SEASON_EXP"]
-    train = train.replace([np.inf,-np.inf], np.nan).fillna(0)
-
-    write_status(phase="FAST: counts",
-                 train_rows=int(len(train)),
-                 uniq_players=int(train["PLAYER_ID"].nunique()),
-                 seasons=len(seasons))
-
-    # If very small, still train (fallback test_size)
-    if len(train) < 40:
-        test_size = 0.1 if len(train) >= 20 else 0.0
-    else:
-        test_size = 0.2
+    if len(train) < 25:
+        write_status(phase="error", message="FAST: insufficient train rows"); return pd.DataFrame()
 
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.model_selection import train_test_split
-
-    X = train[feats].values
-    y = train["BREAKOUT_NEXT"].values
-    if test_size > 0:
-        Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=test_size, random_state=42, stratify=None)
+    X = train[feats].values; y = train["BREAKOUT_NEXT"].values
+    tsz = 0.2 if len(train) >= 80 else (0.1 if len(train) >= 40 else 0.0)
+    if tsz > 0:
+        Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=tsz, random_state=42)
     else:
         Xtr, ytr = X, y
 
-    model = RandomForestClassifier(n_estimators=160, random_state=42, class_weight="balanced")
     write_status(phase="FAST: train")
-    if len(Xtr) == 0:
-        write_status(phase="error", message="FAST: no training rows")
-        return pd.DataFrame()
+    model = RandomForestClassifier(n_estimators=160, random_state=42, class_weight="balanced")
     model.fit(Xtr, ytr)
 
-    # Score most recent season’s early-career players
     latest = max(seasons)
-    cur = all_s[(all_s["SEASON"] == latest) & (all_s["SEASON_EXP"] < early_max_exp)].copy()
+    cur = all_s[(all_s["SEASON"] == latest) & (all_s["SEASON_EXP"] < early_max_exp)].copy().replace([np.inf,-np.inf], np.nan).fillna(0)
     if cur.empty:
-        # Widen once if empty
-        cur = all_s[(all_s["SEASON"] == latest) & (all_s["SEASON_EXP"] <= early_max_exp)].copy()
-
-    cur = cur.replace([np.inf,-np.inf], np.nan).fillna(0)
-    if cur.empty:
-        write_status(phase="error", message=f"FAST: no current rows for {latest}")
-        return pd.DataFrame()
+        write_status(phase="error", message=f"FAST: no current rows for {latest}"); return pd.DataFrame()
 
     write_status(phase="FAST: score", current_rows=int(len(cur)))
-    cur["P_BREAKOUT_NEXT"] = model.predict_proba(cur[feats].values)[:, 1]
-
+    cur["P_BREAKOUT_NEXT"] = model.predict_proba(cur[feats].values)[:,1]
     ranked = cur[["PLAYER_ID","PLAYER_NAME","SEASON_EXP","MPG","PTS_36","TS","P_BREAKOUT_NEXT"]].copy()
-    ranked = ranked.rename(columns={"PLAYER_NAME":"DISPLAY_FIRST_LAST"})
-    ranked = ranked.sort_values("P_BREAKOUT_NEXT", ascending=False)
-
+    ranked = ranked.rename(columns={"PLAYER_NAME":"DISPLAY_FIRST_LAST"}).sort_values("P_BREAKOUT_NEXT", ascending=False)
     write_status(phase="done", rows=int(len(ranked)))
     return ranked
 

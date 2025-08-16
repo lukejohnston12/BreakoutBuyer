@@ -201,9 +201,14 @@ def get_player_info(pid:int)->dict:
 # --- balldontlie helpers ---
 def _bdl_get(endpoint: str, params: Optional[dict] = None, timeout: int = 20) -> dict:
     url = f"https://www.balldontlie.io/api/v1/{endpoint}"
-    r = requests.get(url, params=params, timeout=timeout)
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = requests.get(url, params=params, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        # Add context about the failing request so callers see which URL/params failed
+        msg = f"bdl request failed for {url} with params {params}: {e}"
+        raise RuntimeError(msg) from e
 
 
 def bdl_list_players(limit: int = 600) -> List[dict]:

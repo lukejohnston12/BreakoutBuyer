@@ -138,6 +138,16 @@ def ping_nba():
         write_status(phase="ping_nba_error", message=msg)
         raise HTTPException(status_code=502, detail=msg)
 
+
+@app.get("/api/ping-bdl")
+def ping_bdl():
+    try:
+        j = _bdl_get("players", {"per_page": 5, "page": 1})
+        return {"ok": True, "count": len(j.get("data", [])), "meta": j.get("meta", {})}
+    except Exception as e:
+        write_status(phase="error", message=f"bdl ping: {str(e)[:180]}")
+        raise HTTPException(status_code=502, detail=f"bdl unreachable: {e}")
+
 # --- Utils ---
 def safe_call(fn, max_retries=5, sleep=0.6, **kwargs):
     last_err = None
@@ -189,6 +199,13 @@ def get_player_info(pid:int)->dict:
     }
 
 # --- balldontlie helpers ---
+def _bdl_get(endpoint: str, params: Optional[dict] = None, timeout: int = 20) -> dict:
+    url = f"https://www.balldontlie.io/api/v1/{endpoint}"
+    r = requests.get(url, params=params, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
+
+
 def bdl_list_players(limit: int = 600) -> List[dict]:
     """Return a list of players from balldontlie."""
     out: List[dict] = []

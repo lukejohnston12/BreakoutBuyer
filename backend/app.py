@@ -79,6 +79,8 @@ STATS_PROVIDER = os.getenv("STATS_PROVIDER", "nba").lower()
 MAX_PLAYERS = int(os.getenv("MAX_PLAYERS", "0"))  # 0 = no cap
 STATUS_PATH = os.getenv("BREAKOUTBUYER_STATUS", "/data/status.json")
 
+BDL_PAGE_SIZE = int(os.getenv("BDL_PAGE_SIZE", "100"))
+
 CACHE_DIR = os.getenv("BREAKOUTBUYER_CACHE", "/data/cache")
 
 def cache_read(key: str):
@@ -211,25 +213,24 @@ def _bdl_get(endpoint: str, params: Optional[dict] = None, timeout: int = 20) ->
         raise RuntimeError(msg) from e
 
 
-def bdl_list_players(limit: int = 600) -> List[dict]:
-    """Return a list of players from balldontlie."""
-    out: List[dict] = []
-    per_page = 100
+def bdl_list_players(limit: int = 500) -> List[dict]:
+    """Return up to `limit` players (id, first_name, last_name) with robust pagination."""
+    players: List[dict] = []
     page = 1
-    url = "https://www.balldontlie.io/api/v1/players"
-    while len(out) < limit:
-        try:
-            r = requests.get(url, params={"per_page": per_page, "page": page}, timeout=20)
-            r.raise_for_status()
-            j = r.json()
-            out.extend(j.get("data", []))
-            nxt = j.get("meta", {}).get("next_page")
-            if not nxt:
-                break
-            page = nxt
-        except Exception:
+    while True:
+        data = _bdl_get("players", {"per_page": BDL_PAGE_SIZE, "page": page})
+        chunk = data.get("data", []) or []
+        players.extend(chunk)
+        # stop when we've reached limit OR no more pages
+        if len(players) >= limit:
             break
-    return out[:limit]
+        next_page = data.get("meta", {}).get("next_page")
+        if not next_page:  # None/null means end
+            break
+        page = next_page
+        # small pacing to avoid 429s
+        time.sleep(0.15)
+    return players[:limit]
 
 def bdl_season_averages(season: int, player_ids: List[int]) -> pd.DataFrame:
     """Fetch season averages from balldontlie for the given players."""

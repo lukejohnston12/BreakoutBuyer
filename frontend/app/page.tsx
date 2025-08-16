@@ -77,25 +77,39 @@ export default function Page() {
     setRunning(true);
     const t0 = Date.now();
     try {
-      // kick off build
-      const r = await fetch(`${apiBase}/api/run?fast_pipeline=1`, { method: "POST" });
-      if (!r.ok) {
-        const msg = await r.text().catch(()=> "");
-        throw new Error(`POST /api/run ${r.status} ${msg}`);
-      }
-      // poll status until done
-      let tries = 0;
-      while (tries < 900) { // ~30 min max @ 2s
-        await new Promise(res => setTimeout(res, 2000));
-        const s = await fetch(`${apiBase}/api/status`, { cache: "no-store" }).then(x=>x.json()).catch(()=> ({}));
-        if (s?.phase === "done") break;
-        tries++;
-      }
-      const secs = Math.round((Date.now()-t0)/1000);
+      // kick off build and poll status in parallel
+      let aborted = false;
+      const runReq = fetch(`${apiBase}/api/run?fast_pipeline=1`, { method: "POST" })
+        .then(async r => {
+          if (!r.ok) {
+            const msg = await r.text().catch(() => "");
+            throw new Error(`POST /api/run ${r.status} ${msg}`);
+          }
+        })
+        .catch(e => {
+          aborted = true;
+          throw e;
+        });
+
+      const pollStatus = (async () => {
+        let tries = 0;
+        while (!aborted && tries < 900) { // ~30 min max @ 2s
+          await new Promise(res => setTimeout(res, 2000));
+          const s = await fetch(`${apiBase}/api/status`, { cache: "no-store" })
+            .then(x => x.json())
+            .catch(() => ({}));
+          if (s?.phase === "done") break;
+          tries++;
+        }
+      })();
+
+      await Promise.all([runReq, pollStatus]);
+
+      const secs = Math.round((Date.now() - t0) / 1000);
       console.warn(`Model run complete in ${secs}s`);
       setErrorMsg(`Model run complete in ${secs}s`);
       await fetchLatest();
-    } catch (e:any) {
+    } catch (e: any) {
       console.warn("Run failed:", e?.message || e);
       setErrorMsg(`Run failed: ${e?.message || e}`);
     } finally {

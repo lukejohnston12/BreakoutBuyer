@@ -580,6 +580,42 @@ def health():
         pass
     return info
 
+
+@app.get("/api/run-fast")
+def run_fast_get(request: Request):
+    # Forward to the POST logic using fast pipeline (and any query you passed)
+    qp = request.query_params
+    params = "fast_pipeline=1"
+    if "min" in qp:
+        params += f"&min={qp['min']}"
+    if "max" in qp:
+        params += f"&max={qp['max']}"
+    # Internally call the same function as POST /api/run
+    t0 = time.time()
+    use_fast = True
+    write_status(phase="start", mode="fast")
+    try:
+        ranked = build_dataset_fast()
+        if ranked.empty:
+            detail = "No data built"
+            try:
+                with open(STATUS_PATH) as f:
+                    s = json.load(f)
+                    msg = s.get("message") or s.get("phase")
+                    if msg:
+                        detail = f"No data built: {msg}"
+            except Exception:
+                pass
+            write_status(phase="error", message=detail, elapsed=int(time.time()-t0))
+            raise HTTPException(500, detail)
+        os.makedirs(os.path.dirname(CANDIDATES_PATH), exist_ok=True)
+        ranked.to_csv(CANDIDATES_PATH, index=False)
+        write_status(phase="done", rows=int(len(ranked)), elapsed=int(time.time()-t0))
+        return {"rows": int(len(ranked)), "mode": "fast"}
+    except Exception as e:
+        write_status(phase="error", message=str(e)[:300], elapsed=int(time.time()-t0))
+        raise
+
 @app.post("/api/run")
 def run(request: Request):
     t0 = time.time()
